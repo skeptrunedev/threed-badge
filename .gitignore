@@ -22,3 +22,16 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Nested Git repositories
+# Ignore .git directories that might be accidentally created in subfolders.
+# This does not affect the .git file at the root of a worktree (which is a file, not a directory)
+# or .git files within submodules.
+**/.git/
+
+# Git worktree administrative files
+/commondir
+/gitdir
+/HEAD
+/index
+/ORIG_HEAD
