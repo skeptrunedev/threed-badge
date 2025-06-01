@@ -26,6 +26,33 @@ useTexture.preload(
   'https://assets.vercel.com/image/upload/contentful/image/e5382hct74si/SOT1hmCesOHxEYxL7vkoZ/c57b29c85912047c414311723320c16b/band.jpg'
 );
 
+// Define WaterParticle component
+const WaterParticle = ({ position, radius }) => {
+  return (
+    <RigidBody
+      position={position} // Initial world position
+      linearDamping={0.7} // Water-like damping
+      angularDamping={0.7}
+      restitution={0.1} // Less bouncy
+      friction={0.3}
+      canSleep={true}
+    >
+      <BallCollider args={[radius]} />
+      <mesh castShadow>
+        <sphereGeometry args={[radius, 8, 8]} />{' '}
+        {/* Lower poly for particles */}
+        <meshStandardMaterial
+          color="skyblue"
+          transparent
+          opacity={0.65}
+          roughness={0.1}
+          metalness={0.0}
+        />
+      </mesh>
+    </RigidBody>
+  );
+};
+
 export default function App() {
   const { debug } = useControls({ debug: false });
   return (
@@ -35,10 +62,11 @@ export default function App() {
         <Physics
           debug={debug}
           interpolate
-          gravity={[0, -40, 0]}
+          gravity={[0, -40, 0]} // Existing gravity
           timeStep={1 / 60}
         >
           <Band />
+          {/* Water particles will be rendered by the Band component */}
         </Physics>
         <Environment background blur={0.75}>
           <color attach="background" args={['black']} />
@@ -104,6 +132,75 @@ function Band({ maxSpeed = 50, minSpeed = 10 }) {
   );
   const [dragged, drag] = useState(false);
   const [hovered, hover] = useState(false);
+
+  // Water particle properties
+  const numParticles = 80;
+  const particleRadius = 0.035;
+  const waterLayerDepth = 0.1; // Total depth of the water layer volume
+
+  // Card dimensions (half-extents for its main collider)
+  const cardHx = 0.8;
+  const cardHy = 1.125;
+  const cardHzMain = 0.01; // Half-thickness of the main card body
+
+  // Container wall properties (half-thickness for the collider shapes)
+  const wallHalfThickness = 0.005;
+
+  // Calculate Z center and half-depth for the water container volume
+  // Water container is positioned in front of the card's main body
+  const waterContainerLocalZCenter = cardHzMain + waterLayerDepth / 2;
+  const waterContainerLocalHalfDepth = waterLayerDepth / 2;
+
+  const [initialParticlePositions, setInitialParticlePositions] = useState([]);
+
+  useEffect(() => {
+    const particles = [];
+    // Card RigidBody is at [2,0,0] relative to its parent group at [0,4,0]
+    const cardInitialWorldPos = new THREE.Vector3(2, 4, 0);
+
+    // Define spawn boundaries in card's local space
+    const spawnLocalXMin = -cardHx + 2 * wallHalfThickness + particleRadius;
+    const spawnLocalXMax = cardHx - 2 * wallHalfThickness - particleRadius;
+
+    const spawnLocalYMin = -cardHy + 2 * wallHalfThickness + particleRadius;
+    // Spawn particles in a shallow layer at the bottom of the container
+    const spawnLayerHeight = Math.min(waterLayerDepth * 0.6, cardHy * 0.4);
+    const spawnLocalYMax = spawnLocalYMin + spawnLayerHeight;
+
+    const spawnLocalZMin = cardHzMain + 2 * wallHalfThickness + particleRadius;
+    const spawnLocalZMax =
+      cardHzMain + waterLayerDepth - 2 * wallHalfThickness - particleRadius;
+
+    if (
+      spawnLocalXMin < spawnLocalXMax &&
+      spawnLocalYMin < spawnLocalYMax &&
+      spawnLocalZMin < spawnLocalZMax
+    ) {
+      for (let i = 0; i < numParticles; i++) {
+        const localX =
+          spawnLocalXMin + Math.random() * (spawnLocalXMax - spawnLocalXMin);
+        const localY =
+          spawnLocalYMin + Math.random() * (spawnLocalYMax - spawnLocalYMin);
+        const localZ =
+          spawnLocalZMin + Math.random() * (spawnLocalZMax - spawnLocalZMin);
+
+        particles.push({
+          id: `particle-${i}`,
+          position: [
+            cardInitialWorldPos.x + localX,
+            cardInitialWorldPos.y + localY,
+            cardInitialWorldPos.z + localZ,
+          ],
+        });
+      }
+    } else {
+      console.warn(
+        'Water particle container dimensions are too small for the given particle radius and wall thickness. No particles spawned.'
+      );
+    }
+    setInitialParticlePositions(particles);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run once on mount
 
   useRopeJoint(fixed, j1, [[0, 0, 0], [0, 0, 0], 1]) // prettier-ignore
   useRopeJoint(j1, j2, [[0, 0, 0], [0, 0, 0], 1]) // prettier-ignore
@@ -180,7 +277,62 @@ function Band({ maxSpeed = 50, minSpeed = 10 }) {
           {...segmentProps}
           type={dragged ? 'kinematicPosition' : 'dynamic'}
         >
-          <CuboidCollider args={[0.8, 1.125, 0.01]} />
+          {/* Main card collider (thin back plate) */}
+          <CuboidCollider args={[cardHx, cardHy, cardHzMain]} />
+
+          {/* Invisible walls for water container. Positions are local to the card RigidBody. */}
+          {/* Args for CuboidCollider are half-extents. */}
+
+          {/* Floor */}
+          <CuboidCollider
+            args={[cardHx, wallHalfThickness, waterContainerLocalHalfDepth]}
+            position={[
+              0,
+              -cardHy + wallHalfThickness,
+              waterContainerLocalZCenter,
+            ]}
+          />
+          {/* Left Wall */}
+          <CuboidCollider
+            args={[wallHalfThickness, cardHy, waterContainerLocalHalfDepth]}
+            position={[
+              -cardHx + wallHalfThickness,
+              0,
+              waterContainerLocalZCenter,
+            ]}
+          />
+          {/* Right Wall */}
+          <CuboidCollider
+            args={[wallHalfThickness, cardHy, waterContainerLocalHalfDepth]}
+            position={[
+              cardHx - wallHalfThickness,
+              0,
+              waterContainerLocalZCenter,
+            ]}
+          />
+          {/* Back Wall of water container (sits at the front face of the main card body) */}
+          <CuboidCollider
+            args={[cardHx, cardHy, wallHalfThickness]}
+            position={[
+              0,
+              0,
+              waterContainerLocalZCenter -
+                waterContainerLocalHalfDepth +
+                wallHalfThickness,
+            ]}
+          />
+          {/* Front Wall of water container (to keep particles from spilling out the front) */}
+          <CuboidCollider
+            args={[cardHx, cardHy, wallHalfThickness]}
+            position={[
+              0,
+              0,
+              waterContainerLocalZCenter +
+                waterContainerLocalHalfDepth -
+                wallHalfThickness,
+            ]}
+          />
+
           <group
             scale={2.25}
             position={[0, -1.2, -0.05]}
@@ -229,6 +381,14 @@ function Band({ maxSpeed = 50, minSpeed = 10 }) {
           lineWidth={1}
         />
       </mesh>
+      {/* Render water particles */}
+      {initialParticlePositions.map((p) => (
+        <WaterParticle
+          key={p.id}
+          position={p.position}
+          radius={particleRadius}
+        />
+      ))}
     </>
   );
 }
